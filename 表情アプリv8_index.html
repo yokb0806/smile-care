@@ -1,931 +1,530 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Smile & Beauty - 表情ケア＆スマイル練習</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Lumière Beauté - Expression & Smile Care</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- MediaPipe (クロスオリジン対応) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <style>
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #fcfbf9; font-family: 'Helvetica Neue', Arial, sans-serif; touch-action: none; }
+    /* iOSのカメラ停止を防ぐためのハック（完全に消さずに透明にして背面に置く） */
+    #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; z-index: -1; pointer-events: none; }
+    canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; }
+    #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding-bottom: env(safe-area-inset-bottom); }
+    .pointer-events-auto { pointer-events: auto; }
+    .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px); border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+    .btn-primary { background: #dca5b0; color: white; border-radius: 9999px; padding: 14px 24px; font-weight: bold; width: 100%; transition: all 0.3s; }
+    .btn-primary:active { transform: scale(0.98); background: #c5909b; }
+    .btn-primary:disabled { background: #e2e8f0; color: #a0aec0; transform: none; }
     
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Google Fonts for elegant typography -->
-    <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;700&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
-    
-    <!-- MediaPipe Face Mesh & Camera Utils -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
-
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['"Noto Sans JP"', 'sans-serif'],
-                        serif: ['"Shippori Mincho"', 'serif'],
-                    },
-                    colors: {
-                        brand: {
-                            light: '#FDFBF7', // Very light warm gray/beige
-                            accent: '#E6A8B8', // Soft cosmetics pink
-                            dark: '#5A4B4E',  // Dark warm gray for text
-                            gold: '#C5A880'   // Subtle gold for borders
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-
-    <style>
-        body {
-            background-color: #f3eee8;
-            -webkit-font-smoothing: antialiased;
-        }
-        
-        .glass-panel {
-            background: rgba(255, 255, 255, 0.85);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-        }
-
-        /* Smooth fade transitions for UI steps */
-        .fade-enter {
-            opacity: 0;
-            transform: translateY(10px);
-            transition: opacity 0.5s ease, transform 0.5s ease;
-        }
-        .fade-enter-active {
-            opacity: 1;
-            transform: translateY(0);
-        }
-        
-        .hidden-step {
-            display: none !important;
-        }
-
-        /* Marker animations */
-        @keyframes pulse-ring {
-            0% { transform: scale(0.8); opacity: 0.8; }
-            100% { transform: scale(2); opacity: 0; }
-        }
-        .target-marker::before {
-            content: '';
-            position: absolute;
-            inset: -4px;
-            border-radius: 50%;
-            border: 2px solid #E6A8B8;
-            animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
-        }
-
-        /* Dynamic Absolute Positioning Container */
-        #overlays-container {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none; /* Let clicks pass through to buttons if needed */
-        }
-    </style>
+    /* ローディングとエラー画面 */
+    #overlay-screen { position: absolute; inset: 0; background: #fcfbf9; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: auto; transition: opacity 0.5s; }
+    .spinner { border: 3px solid rgba(220, 165, 176, 0.3); border-top: 3px solid #dca5b0; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 1rem; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
 </head>
-<body class="text-brand-dark flex items-center justify-center min-h-screen">
+<body>
 
-    <!-- Main App Container (Simulating Tablet/Phone Screen) -->
-    <div class="relative w-full max-w-md h-[100dvh] sm:h-[85vh] sm:rounded-3xl overflow-hidden bg-brand-light shadow-2xl flex flex-col">
-        
-        <!-- Header -->
-        <header class="absolute top-0 w-full z-20 p-4 bg-gradient-to-b from-brand-light/90 to-transparent">
-            <h1 class="text-center font-serif text-lg text-brand-dark tracking-widest">Lumière Beauté</h1>
-            <p class="text-center text-xs text-gray-500 font-sans tracking-wide">Expression & Smile Care</p>
-        </header>
+  <!-- ローディング・エラー画面 -->
+  <div id="overlay-screen">
+    <div id="loading-content" class="flex flex-col items-center">
+      <div class="spinner"></div>
+      <h2 class="text-lg font-bold text-gray-700">カメラとAIを準備中...</h2>
+      <p class="text-xs text-gray-500 mt-2">ブラウザのカメラアクセスを許可してください</p>
+    </div>
+    <div id="error-content" class="hidden flex-col items-center text-center px-6">
+      <svg class="w-12 h-12 mb-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+      <h2 class="text-lg font-bold text-gray-800 mb-2">カメラが起動できません</h2>
+      <p class="text-sm text-gray-600 mb-4">カメラのアクセス権限が許可されていないか、対応していないブラウザです。</p>
+      <p id="error-detail" class="text-xs text-red-500 break-all"></p>
+    </div>
+  </div>
 
-        <!-- Camera/Canvas Area -->
-        <div class="relative flex-1 bg-gray-200">
-            <!-- iOS requirements: playsinline, autoplay, muted. display:none is removed to prevent iOS Safari from freezing stream -->
-            <video id="input_video" playsinline webkit-playsinline autoplay muted class="absolute w-[1px] h-[1px] top-0 left-0 -z-10 pointer-events-none" style="opacity: 0.01;"></video>
-            <canvas id="output_canvas" class="absolute inset-0 w-full h-full"></canvas>
+  <!-- ビデオ要素 (iOS対策済み) -->
+  <video id="video" playsinline autoplay muted></video>
+  
+  <!-- 描画用メインキャンバス -->
+  <canvas id="canvas"></canvas>
 
-            <!-- Loading Indicator -->
-            <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center bg-brand-light z-30">
-                <div class="w-10 h-10 border-4 border-brand-accent border-t-transparent rounded-full animate-spin"></div>
-                <p class="mt-4 font-serif text-sm text-brand-dark">カメラを準備中...</p>
-            </div>
-
-            <!-- Face Guide Overlay (Added) -->
-            <div id="face-guide" class="absolute inset-0 pointer-events-none flex items-center justify-center z-10 transition-opacity duration-500 opacity-100">
-                <div class="relative w-[55%] aspect-[3/4] max-w-[220px] max-h-[300px] border-2 border-dashed border-white/80 rounded-[45%] flex items-center justify-center shadow-[0_0_0_9999px_rgba(255,255,255,0.05)]">
-                    <span class="absolute -bottom-8 w-full text-center text-white text-xs font-sans tracking-widest drop-shadow-md bg-black/20 py-1 rounded-full backdrop-blur-sm">ここに顔を収めてください</span>
-                </div>
-            </div>
-
-            <!-- Dynamic UI Overlays (Generated by JS based on coordinates) -->
-            <div id="overlays-container" class="z-10"></div>
-        </div>
-
-        <!-- UI Controllers Container -->
-        <div class="absolute bottom-0 w-full z-20 pb-8 pt-12 px-6 bg-gradient-to-t from-white via-white/90 to-transparent">
-            
-            <!-- Step 1: Initial & Capture -->
-            <div id="step-1" class="step-ui flex flex-col items-center">
-                <p class="text-sm font-sans mb-4 text-center text-gray-600">お顔を正面に向け、リラックスしてください。</p>
-                <button onclick="captureAndAnalyze()" class="w-full py-4 rounded-full bg-brand-dark text-white font-serif tracking-widest shadow-lg hover:bg-gray-800 transition-colors">
-                    顔の分析を開始する
-                </button>
-            </div>
-
-            <!-- Step 2: Analysis Results -->
-            <div id="step-2" class="step-ui hidden-step flex flex-col items-center">
-                <div class="glass-panel w-full rounded-2xl p-4 mb-4 text-center">
-                    <h2 class="font-serif text-lg mb-2 text-brand-dark">分析結果</h2>
-                    <p class="text-xs font-sans text-gray-600 mb-3">理想の笑顔を作るためのポイントを算出しました。</p>
-                    <div id="analysis-results-ui" class="flex justify-around text-sm font-sans font-medium text-brand-dark mb-3">
-                        <div class="flex flex-col"><span class="text-brand-accent text-lg">↑ 5<span class="text-xs">mm</span></span>口角</div>
-                        <div class="flex flex-col"><span class="text-brand-accent text-lg">↓ 2<span class="text-xs">mm</span></span>目尻</div>
-                        <div class="flex flex-col"><span class="text-brand-accent text-lg">↑ 3<span class="text-xs">mm</span></span>頬位置</div>
-                    </div>
-                    <p class="text-[10px] text-gray-500 bg-white/60 py-1.5 px-3 rounded-full inline-block shadow-sm">
-                        ※ピンクの点をドラッグして位置を微調整できます
-                    </p>
-                </div>
-                <button onclick="startPracticeMode()" class="w-full py-4 rounded-full bg-brand-accent text-white font-serif tracking-widest shadow-lg hover:bg-pink-400 transition-colors">
-                    スマイル練習へ
-                </button>
-            </div>
-
-            <!-- Step 3: Practice Mode -->
-            <div id="step-3" class="step-ui hidden-step flex flex-col items-center">
-                <div class="glass-panel w-full rounded-2xl p-4 mb-4 text-center border-brand-accent border">
-                    <h2 class="font-serif text-lg mb-1 text-brand-dark">スマイル練習</h2>
-                    <p class="text-xs font-sans text-gray-600">
-                        画面の<span class="text-brand-accent font-bold">ピンクのターゲット</span>に<br>
-                        目尻・口角・頬が重なるように表情を作りましょう。
-                    </p>
-                </div>
-                <button onclick="showMakeupAdvice()" class="w-full py-4 rounded-full bg-brand-dark text-white font-serif tracking-widest shadow-lg hover:bg-gray-800 transition-colors">
-                    メイクアドバイスを見る
-                </button>
-            </div>
-
-            <!-- Step 4: Makeup Advice -->
-            <div id="step-4" class="step-ui hidden-step flex flex-col items-center">
-                <div class="glass-panel w-full rounded-2xl p-4 mb-4 text-center">
-                    <h2 class="font-serif text-lg mb-2 text-brand-dark">メイクアップアドバイス</h2>
-                    <p class="text-xs font-sans text-gray-600">
-                        表情筋のサポートだけでなく、<br>メイクでも理想の印象へ近づけましょう。
-                    </p>
-                </div>
-                <button onclick="resetApp()" class="w-full py-4 rounded-full bg-white border border-brand-dark text-brand-dark font-serif tracking-widest shadow hover:bg-gray-50 transition-colors">
-                    最初に戻る
-                </button>
-            </div>
-
-        </div>
+  <!-- UIレイヤー -->
+  <div id="ui-layer">
+    <!-- ヘッダー -->
+    <div class="text-center pt-8 pb-4 bg-gradient-to-b from-white/80 to-transparent">
+      <h1 class="text-xl font-serif text-gray-800 tracking-widest">Lumière Beauté</h1>
+      <p class="text-xs text-gray-500 mt-1">Expression & Smile Care</p>
     </div>
 
-    <script>
-        /**
-         * Core Application Logic
-         */
-        
-        // DOM Elements
-        const videoElement = document.getElementById('input_video');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-        const overlaysContainer = document.getElementById('overlays-container');
-        
-        // State variables
-        let currentStep = 1;
-        let latestResults = null;
-        let capturedImageStr = null;
-        let capturedImageObj = null; // チラつき防止用キャッシュ
-        let capturedLandmarks = null;
-        let isFaceDetected = false;
-        let canvasRect = { width: 0, height: 0 };
-        let adjustedPoints = {}; // ドラッグ調整用の座標保持
-        let draggingKey = null;
-        let renderParams = { x: 0, y: 0, w: 0, h: 0, scale: 1, iw: 1280, ih: 720, cw: 0, ch: 0 }; // ズーム・反転計算用
-        
-        let analysisData = {
-            mouth: { mm: 5, shiftY: -15, shiftX: -4 },
-            eye:   { mm: 2, shiftY: 6,   shiftX: -3 },
-            cheek: { mm: 3, shiftY: -9,  shiftX: -2 }
-        };
+    <!-- コンテンツエリア -->
+    <div class="flex-1 relative w-full h-full">
+      <!-- Step 1: ガイド枠 -->
+      <div id="step1-guide" class="absolute inset-0 flex flex-col items-center justify-center hidden opacity-0 transition-opacity duration-500">
+        <!-- 映像の上シフトに合わせてガイド枠も上へオフセット (15vh 上へ) -->
+        <div class="w-64 h-80 border-2 border-white/70 rounded-[40px] border-dashed relative shadow-sm" style="transform: translateY(-15vh);">
+          <div class="absolute -top-10 w-full text-center text-white text-sm font-bold drop-shadow-md">ここに顔を収めてください</div>
+        </div>
+      </div>
+      <!-- Step 4: メイクアドバイス用ツールチップ -->
+      <div id="makeup-tooltips" class="absolute inset-0 hidden pointer-events-auto"></div>
+    </div>
 
-        // MediaPipe Face Mesh Landmark Indices
-        const LM = {
-            mouthLeft: 61,
-            mouthRight: 291,
-            eyeOuterLeft: 33,
-            eyeOuterRight: 263,
-            cheekLeft: 50,
-            cheekRight: 280
-        };
+    <!-- フッターカード -->
+    <div class="p-4 w-full pointer-events-auto pb-6">
+      <div class="glass-card p-6 text-center shadow-xl">
+        <!-- Step 1 -->
+        <div id="step1-ui" class="hidden">
+          <p class="text-sm text-gray-600 mb-6">お顔を正面に向け、リラックスしてください。</p>
+          <button id="btn-start" class="btn-primary" disabled>顔の分析を開始する</button>
+        </div>
 
-        // Initialize Face Mesh
-        const faceMesh = new FaceMesh({locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-        }});
+        <!-- Step 2 -->
+        <div id="step2-ui" class="hidden">
+          <h3 class="text-lg text-gray-800 mb-2 font-bold">分析結果</h3>
+          <p class="text-xs text-gray-500 mb-4">あなたに最適な理想の笑顔を作るポイントを算出しました。</p>
+          <div class="flex justify-around items-center mb-4 text-sm" id="analysis-results"></div>
+          <p class="text-[10px] text-gray-400 mb-4 bg-gray-50 p-2 rounded">※ピンクの点をドラッグして位置を微調整できます</p>
+          <button id="btn-practice" class="btn-primary">スマイル練習へ</button>
+        </div>
 
-        // Global Error Handling to prevent WebView crashes
-        window.addEventListener('error', function(event) {
-            console.warn("Caught Global Error: ", event.message);
+        <!-- Step 3 -->
+        <div id="step3-ui" class="hidden">
+          <h3 class="text-lg text-gray-800 mb-2 font-bold">スマイル練習</h3>
+          <p class="text-xs text-gray-500 mb-4">画面の<span class="text-pink-500 font-bold">ピンクのターゲット</span>に<br>目尻・口角・頬が重なるように表情を作りましょう。</p>
+          <button id="btn-makeup" class="btn-primary">メイクアドバイスを見る</button>
+        </div>
+
+        <!-- Step 4 -->
+        <div id="step4-ui" class="hidden">
+          <h3 class="text-lg text-gray-800 mb-2 font-bold">メイクアップアドバイス</h3>
+          <p class="text-xs text-gray-500 mb-4">表情筋のサポートだけでなく、<br>メイクでも理想の印象へ近づけましょう。</p>
+          <button id="btn-reset" class="btn-primary !bg-gray-800">最初に戻る</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", async () => {
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const overlay = document.getElementById('overlay-screen');
+      
+      // オフスクリーンキャンバス（Step3の半透明固定顔用）
+      const offscreenCanvas = document.createElement('canvas');
+      const offCtx = offscreenCanvas.getContext('2d');
+      
+      let currentStep = 1;
+      let lastVideoFrame = null;
+      let faceLandmarks = null;
+      let isSystemReady = false;
+
+      // 描画用の座標計算キャッシュ
+      let renderDims = { x: 0, y: 0, w: 0, h: 0 };
+
+      // 分析ポイント
+      let points = {
+        leftEye: { id: 33, current: {x:0, y:0}, target: {x:0, y:0}, diff: {x:0, y: 2}, label: '目尻', name: 'leftEye' },
+        rightEye: { id: 263, current: {x:0, y:0}, target: {x:0, y:0}, diff: {x:0, y: 2}, label: '目尻', name: 'rightEye' },
+        leftMouth: { id: 61, current: {x:0, y:0}, target: {x:0, y:0}, diff: {x:0, y: -5}, label: '口角', name: 'leftMouth' },
+        rightMouth: { id: 291, current: {x:0, y:0}, target: {x:0, y:0}, diff: {x:0, y: -5}, label: '口角', name: 'rightMouth' },
+        leftCheek: { id: 205, current: {x:0, y:0}, target: {x:0, y:0}, diff: {x:0, y: -3}, label: '頬位置', name: 'leftCheek' },
+        rightCheek: { id: 425, current: {x:0, y:0}, target: {x:0, y:0}, diff: {x:0, y: -3}, label: '頬位置', name: 'rightCheek' },
+      };
+
+      const ui = {
+        step1: document.getElementById('step1-ui'),
+        step2: document.getElementById('step2-ui'),
+        step3: document.getElementById('step3-ui'),
+        step4: document.getElementById('step4-ui'),
+        guide: document.getElementById('step1-guide'),
+        tooltips: document.getElementById('makeup-tooltips'),
+        results: document.getElementById('analysis-results'),
+        btnStart: document.getElementById('btn-start')
+      };
+
+      function showError(msg) {
+        document.getElementById('loading-content').classList.add('hidden');
+        document.getElementById('error-content').classList.remove('hidden');
+        document.getElementById('error-detail').innerText = msg;
+      }
+
+      // キャンバスのリサイズとDPR対応
+      function resizeCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.parentElement.getBoundingClientRect();
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.setTransform(1, 0, 0, 1, 0, 0); // リセット
+        ctx.scale(dpr, dpr);
+        
+        offscreenCanvas.width = canvas.width;
+        offscreenCanvas.height = canvas.height;
+      }
+      window.addEventListener('resize', resizeCanvas);
+      resizeCanvas();
+
+      // MediaPipe 初期化
+      const faceMesh = new FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+      });
+      faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      faceMesh.onResults(onResults);
+
+      // WebRTCカメラ起動
+      const camera = new Camera(video, {
+        onFrame: async () => {
+          await faceMesh.send({image: video});
+        },
+        width: 1280,
+        height: 720,
+        facingMode: 'user'
+      });
+      
+      try {
+        await camera.start();
+      } catch (err) {
+        showError("カメラへのアクセスが拒否されたか、デバイスにカメラがありません。");
+        return;
+      }
+
+      function onResults(results) {
+        lastVideoFrame = results.image;
+        faceLandmarks = (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) ? results.multiFaceLandmarks[0] : null;
+        
+        // 初回フレーム取得時にUIを開放
+        if (!isSystemReady && lastVideoFrame) {
+          isSystemReady = true;
+          overlay.style.opacity = '0';
+          setTimeout(() => overlay.style.display = 'none', 500);
+          ui.btnStart.disabled = false;
+          setStep(1);
+        }
+
+        updateRenderDims();
+        drawFrame();
+      }
+
+      // ズームとセンタリングの正確な計算
+      function updateRenderDims() {
+        if (!lastVideoFrame) return;
+        const w = canvas.width / (window.devicePixelRatio || 1);
+        const h = canvas.height / (window.devicePixelRatio || 1);
+        const canvasRatio = w / h;
+        const videoRatio = lastVideoFrame.width / lastVideoFrame.height;
+        
+        let drawW, drawH;
+        if (canvasRatio > videoRatio) {
+          drawW = w;
+          drawH = w / videoRatio;
+        } else {
+          drawW = h * videoRatio;
+          drawH = h;
+        }
+        
+        // ズーム率（画面の大半が顔になるよう少し寄る）
+        const zoom = 1.3;
+        renderDims.w = drawW * zoom;
+        renderDims.h = drawH * zoom;
+        // 常にキャンバスの中央に配置
+        renderDims.x = (w - renderDims.w) / 2;
+        // 下部のUIカードとの被りを防ぐため、Y軸を多めに上へオフセット (15%上へ)
+        renderDims.y = (h - renderDims.h) / 2 - (h * 0.15);
+      }
+
+      // 映像の描画（鏡のように反転）
+      function drawVideoFrameToCtx(targetCtx, w) {
+        targetCtx.save();
+        targetCtx.translate(w, 0);
+        targetCtx.scale(-1, 1);
+        // 反転後の正確な座標計算
+        targetCtx.drawImage(lastVideoFrame, renderDims.x, renderDims.y, renderDims.w, renderDims.h);
+        targetCtx.restore();
+      }
+
+      function drawFrame() {
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvas.width / dpr;
+        const h = canvas.height / dpr;
+        ctx.clearRect(0, 0, w, h);
+
+        if (!lastVideoFrame) return;
+
+        if (currentStep === 1) {
+          drawVideoFrameToCtx(ctx, w);
+        } 
+        else if (currentStep === 2 || currentStep === 4) {
+          // キャプチャした固定画を表示
+          ctx.save();
+          ctx.scale(1/dpr, 1/dpr);
+          ctx.drawImage(offscreenCanvas, 0, 0);
+          ctx.restore();
+          
+          if(currentStep === 2) drawPointsAndDiff(w);
+        } 
+        else if (currentStep === 3) {
+          // ライブカメラ映像
+          drawVideoFrameToCtx(ctx, w);
+          
+          // 半透明のキャプチャ画像（理想の顔のガイド）を重ねる
+          ctx.save();
+          ctx.globalAlpha = 0.35;
+          ctx.scale(1/dpr, 1/dpr);
+          ctx.drawImage(offscreenCanvas, 0, 0);
+          ctx.restore();
+          
+          drawLivePractice(w);
+        }
+      }
+
+      // ランドマーク（顔の座標）をキャンバスのCSSピクセル座標に変換
+      function getMappedCoord(lm, w) {
+        // 反転しているため w - (...) とする
+        const x = w - (lm.x * renderDims.w + renderDims.x);
+        const y = lm.y * renderDims.h + renderDims.y;
+        return { x, y };
+      }
+
+      function analyzeFace() {
+        if(!lastVideoFrame) return;
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvas.width / dpr;
+        
+        // オフスクリーンキャンバスに現在のフレームを保存
+        offCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        offCtx.scale(dpr, dpr);
+        drawVideoFrameToCtx(offCtx, w);
+        offCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+        ui.results.innerHTML = ''; 
+        let groups = { '口角': 0, '目尻': 0, '頬位置': 0 };
+
+        Object.values(points).forEach(p => {
+          if (faceLandmarks) {
+            const coord = getMappedCoord(faceLandmarks[p.id], w);
+            p.current.x = coord.x;
+            p.current.y = coord.y;
+          } else {
+            p.current = {x: w/2, y: canvas.height/dpr/2};
+          }
+          
+          // 顔立ちに合わせた疑似パーソナライズ分析
+          const randomVal = Math.floor(Math.random() * 4) + 2; // 2〜5mm
+          const isUp = Math.random() > 0.3; // 70%で上
+          p.diff.y = isUp ? -randomVal : randomVal; 
+
+          p.target.x = p.current.x;
+          p.target.y = p.current.y + (p.diff.y * 3); // 1mm = 3px換算
+
+          groups[p.label] = Math.abs(p.diff.y);
         });
-        window.addEventListener('unhandledrejection', function(event) {
-            console.warn("Caught Unhandled Promise: ", event.reason);
+
+        // 結果テキスト生成
+        Object.keys(groups).forEach(label => {
+          const val = groups[label];
+          const arrow = label === '目尻' ? '↓' : '↑'; 
+          const color = label === '目尻' ? 'text-gray-500' : 'text-pink-500';
+          ui.results.innerHTML += `
+            <div class="text-center bg-white/50 rounded-lg p-2 flex-1 mx-1">
+              <span class="${color} font-bold text-base block mb-1">${arrow} ${val}mm</span>
+              <span class="text-gray-700 text-xs">${label}</span>
+            </div>
+          `;
         });
+      }
 
-        faceMesh.setOptions({
-            maxNumFaces: 1,
-            refineLandmarks: true,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
+      function drawPointsAndDiff(w) {
+        Object.values(points).forEach(p => {
+          // 点線
+          ctx.beginPath();
+          ctx.moveTo(p.current.x, p.current.y);
+          ctx.lineTo(p.target.x, p.target.y);
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+          ctx.setLineDash([3, 3]);
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // ターゲット位置（黄）
+          ctx.beginPath();
+          ctx.arc(p.target.x, p.target.y, 6, 0, 2 * Math.PI);
+          ctx.fillStyle = "#FDE047";
+          ctx.fill();
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // 吹き出し
+          const diffText = (p.diff.y < 0 ? '↑' : '↓') + Math.abs(p.diff.y) + 'mm';
+          ctx.fillStyle = "#FDE047";
+          ctx.beginPath();
+          ctx.roundRect(p.target.x - 26, p.target.y - 34, 52, 20, 8);
+          ctx.fill();
+          ctx.fillStyle = "#333333";
+          ctx.font = "bold 11px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(diffText, p.target.x, p.target.y - 24);
+
+          // 現在位置（ピンク・ドラッグ対象）
+          const isDrag = (dragPoint === p);
+          ctx.beginPath();
+          ctx.arc(p.current.x, p.current.y, isDrag ? 14 : 8, 0, 2 * Math.PI);
+          ctx.fillStyle = isDrag ? "rgba(244, 114, 182, 0.9)" : "rgba(244, 114, 182, 0.7)";
+          ctx.fill();
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          
+          ctx.beginPath();
+          ctx.arc(p.current.x, p.current.y, isDrag ? 18 : 14, 0, 2 * Math.PI);
+          ctx.strokeStyle = "rgba(244, 114, 182, 0.4)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
         });
+      }
 
-        faceMesh.onResults(onResults);
+      function drawLivePractice(w) {
+        if (!faceLandmarks) return;
 
-        // Start Camera
-        async function startCamera() {
-            try {
-                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                    throw new Error("カメラAPIがサポートされていません。");
-                }
+        Object.values(points).forEach(p => {
+          const liveCoord = getMappedCoord(faceLandmarks[p.id], w);
+          
+          const dx = liveCoord.x - p.target.x;
+          const dy = liveCoord.y - p.target.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          const isMatch = dist < 12; // 正解の当たり判定
 
-                // Use slightly broader constraints for better cross-browser compatibility
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: 'user',
-                        width: { ideal: 1280, max: 1920 },
-                        height: { ideal: 720, max: 1080 }
-                    },
-                    audio: false
-                });
-                
-                videoElement.srcObject = stream;
-                
-                // Use a promise to ensure play() is handled correctly
-                const playPromise = videoElement.play();
-                
-                if (playPromise !== undefined) {
-                    playPromise.then(() => {
-                        document.getElementById('loading').style.display = 'none';
-                        startFaceMeshLoop();
-                    }).catch(error => {
-                        console.error("Auto-play was prevented", error);
-                        showPlayButton();
-                    });
-                } else {
-                    // Fallback if play() doesn't return a promise
-                    videoElement.onplaying = () => {
-                        document.getElementById('loading').style.display = 'none';
-                        startFaceMeshLoop();
-                    };
-                }
-                
-            } catch (err) {
-                console.error("Camera Init Error:", err);
-                showCameraError();
-            }
-        }
-        
-        function startFaceMeshLoop() {
-            let lastVideoTime = -1;
-            const processFrame = async () => {
-                // Ensure video is fully ready and has valid dimensions before sending to MediaPipe
-                if (videoElement.readyState >= 2 && !videoElement.paused && !videoElement.ended && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
-                    if (videoElement.currentTime !== lastVideoTime) {
-                        lastVideoTime = videoElement.currentTime;
-                        try {
-                            await faceMesh.send({image: videoElement});
-                        } catch (e) {
-                            console.warn("FaceMesh process error:", e);
-                        }
-                    }
-                }
-                requestAnimationFrame(processFrame);
-            };
-            requestAnimationFrame(processFrame);
-        }
-
-        function showPlayButton() {
-            document.getElementById('loading').innerHTML = `
-                <div class="bg-white/95 backdrop-blur p-5 rounded-2xl shadow-xl mx-6 border border-brand-accent text-center flex flex-col items-center cursor-pointer" onclick="forcePlayVideo()">
-                    <p class="font-serif text-sm text-brand-dark font-bold mb-2">カメラを開始する</p>
-                    <p class="text-[11px] text-gray-600 font-sans leading-relaxed">ここをタップしてください</p>
-                </div>`;
-        }
-
-        function forcePlayVideo() {
-            videoElement.play().then(() => {
-                document.getElementById('loading').style.display = 'none';
-                startFaceMeshLoop();
-            }).catch(e => {
-                console.error("Manual play failed", e);
-            });
-        }
-
-        function showCameraError() {
-             document.getElementById('loading').innerHTML = `
-                <div class="bg-white/95 backdrop-blur p-5 rounded-2xl shadow-xl mx-6 border border-red-100 text-center flex flex-col items-center">
-                    <svg class="w-8 h-8 text-red-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                    <p class="font-serif text-sm text-brand-dark font-bold mb-2">カメラを起動できません</p>
-                    <p class="text-[11px] text-gray-600 font-sans leading-relaxed">
-                        ブラウザのカメラへのアクセス権限が許可されているかご確認ください。<br><br>
-                        <span class="text-brand-accent">※LINEなどのアプリ内ブラウザをご利用の場合は、右上のメニューから「Safariで開く」または「ブラウザで開く」を選択してください。</span>
-                    </p>
-                </div>`;
-        }
-
-        startCamera();
-
-        // Resize Canvas to match display size & Device Pixel Ratio for Retina displays
-        const getDPR = () => window.devicePixelRatio || 1;
-
-        function resizeCanvas() {
-            const rect = canvasElement.getBoundingClientRect();
-            // Container hasn't fully layout yet
-            if (rect.width === 0 || rect.height === 0) return;
-            
-            canvasRect = rect;
-            const dpr = getDPR();
-            canvasElement.width = canvasRect.width * dpr;
-            canvasElement.height = canvasRect.height * dpr;
-            
-            if(currentStep === 2) drawStep2Canvas();
-            else if(currentStep === 4) renderStaticFrame();
-        }
-        window.addEventListener('resize', resizeCanvas);
-        
-        // Ensure initial sizing
-        document.addEventListener('DOMContentLoaded', () => {
-            setTimeout(resizeCanvas, 50);
+          // ターゲット位置に枠を描画
+          ctx.beginPath();
+          ctx.arc(p.target.x, p.target.y, 12, 0, 2 * Math.PI);
+          if (isMatch) {
+            // 一致したら黄色く光る
+            ctx.fillStyle = "rgba(253, 224, 71, 0.8)";
+            ctx.shadowColor = "#FDE047";
+            ctx.shadowBlur = 15;
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 3;
+          } else {
+            // 一致していなければピンクの枠のみ
+            ctx.fillStyle = "transparent";
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = "rgba(244, 114, 182, 0.8)";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 2]);
+          }
+          ctx.fill();
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.setLineDash([]);
         });
+      }
 
-        // --- ドラッグ操作のイベントリスナー (Step 2用) ---
-        function getMousePos(e) {
-            const rect = canvasElement.getBoundingClientRect();
-            let clientX = e.clientX;
-            let clientY = e.clientY;
-            if (e.touches && e.touches.length > 0) {
-                clientX = e.touches[0].clientX;
-                clientY = e.touches[0].clientY;
-            }
-            return { x: clientX - rect.left, y: clientY - rect.top };
+      function generateTooltips() {
+        ui.tooltips.innerHTML = '';
+        const tooltipsData = [
+          { p: points.rightEye, title: '✨ アイライン', text: '目尻を2mm下げて引き、優しげなアーチを描くように仕上げます。', offsetY: -70 },
+          { p: points.leftCheek, title: '🌸 チーク位置', text: '笑った時に一番高くなる位置より少し上に、楕円形に入れます。', offsetY: 30 },
+          { p: points.rightMouth, title: '💄 リップ', text: '口角の輪郭を上にコンシーラーで補正します。', offsetY: 70 }
+        ];
+
+        tooltipsData.forEach(item => {
+          const el = document.createElement('div');
+          el.className = 'absolute glass-card p-3 w-48 text-left shadow-xl pointer-events-auto transform -translate-x-1/2 transition-all duration-300';
+          el.style.left = item.p.target.x + 'px';
+          el.style.top = (item.p.target.y + item.offsetY) + 'px';
+          el.innerHTML = `
+            <h4 class="text-[11px] font-bold text-gray-800 mb-1 border-b border-gray-100 pb-1">${item.title}</h4>
+            <p class="text-[10px] text-gray-600 leading-relaxed">${item.text}</p>
+          `;
+          ui.tooltips.appendChild(el);
+        });
+      }
+
+      function setStep(step) {
+        currentStep = step;
+        ui.step1.classList.add('hidden');
+        ui.step2.classList.add('hidden');
+        ui.step3.classList.add('hidden');
+        ui.step4.classList.add('hidden');
+        ui.guide.classList.add('opacity-0');
+        setTimeout(() => ui.guide.classList.add('hidden'), 500);
+        ui.tooltips.classList.add('hidden');
+
+        if(step === 1) {
+          ui.step1.classList.remove('hidden');
+          ui.guide.classList.remove('hidden');
+          setTimeout(() => ui.guide.classList.remove('opacity-0'), 50);
+        } else if (step === 2) {
+          ui.step2.classList.remove('hidden');
+        } else if (step === 3) {
+          ui.step3.classList.remove('hidden');
+        } else if (step === 4) {
+          ui.step4.classList.remove('hidden');
+          ui.tooltips.classList.remove('hidden');
+          generateTooltips();
         }
+      }
 
-        const handlePointerDown = (e) => {
-            if (currentStep !== 2) return;
-            const pos = getMousePos(e);
-            for (const [key, pt] of Object.entries(adjustedPoints)) {
-                if (Math.hypot(pt.x - pos.x, pt.y - pos.y) < 25) { // 25pxの判定範囲
-                    draggingKey = key;
-                    if(e.cancelable) e.preventDefault();
-                    break;
-                }
-            }
-        };
+      // --- ドラッグ処理 ---
+      let isDragging = false;
+      let dragPoint = null;
 
-        const handlePointerMove = (e) => {
-            if (currentStep !== 2 || !draggingKey) return;
-            if(e.cancelable) e.preventDefault();
-            const pos = getMousePos(e);
-            adjustedPoints[draggingKey] = { x: pos.x, y: pos.y };
-            drawStep2Canvas(); // 画面を再描画
-        };
+      function getEventPos(e) {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        // CSSピクセル座標を返す
+        return { x: clientX - rect.left, y: clientY - rect.top };
+      }
 
-        const handlePointerUp = (e) => {
-            if (currentStep !== 2 || !draggingKey) return;
-            draggingKey = null;
-            // ドラッグ完了後、元のlandmarksデータに正規化して反映（Step3/4のため）
-            const setNorm = (idx, key) => {
-                if(!capturedLandmarks[idx]) return;
-                const norm = getNormFromCanvasPos(adjustedPoints[key].x, adjustedPoints[key].y);
-                capturedLandmarks[idx].x = norm.x;
-                capturedLandmarks[idx].y = norm.y;
-            };
-            setNorm(LM.mouthLeft, 'mouthL');
-            setNorm(LM.mouthRight, 'mouthR');
-            setNorm(LM.eyeOuterLeft, 'eyeL');
-            setNorm(LM.eyeOuterRight, 'eyeR');
-            setNorm(LM.cheekLeft, 'cheekL');
-            setNorm(LM.cheekRight, 'cheekR');
-        };
+      function onDown(e) {
+        if (currentStep !== 2) return;
+        const pos = getEventPos(e);
+        Object.values(points).forEach(p => {
+          const dx = pos.x - p.current.x;
+          const dy = pos.y - p.current.y;
+          // タッチしやすいように判定エリアを広めに (30px)
+          if (Math.sqrt(dx*dx + dy*dy) < 30) {
+            isDragging = true;
+            dragPoint = p;
+          }
+        });
+      }
 
-        // マウスとタッチイベントの両方を登録
-        canvasElement.addEventListener('mousedown', handlePointerDown);
-        canvasElement.addEventListener('mousemove', handlePointerMove);
-        canvasElement.addEventListener('mouseup', handlePointerUp);
-        canvasElement.addEventListener('mouseleave', handlePointerUp);
-        canvasElement.addEventListener('touchstart', handlePointerDown, {passive: false});
-        canvasElement.addEventListener('touchmove', handlePointerMove, {passive: false});
-        canvasElement.addEventListener('touchend', handlePointerUp);
-        canvasElement.addEventListener('touchcancel', handlePointerUp);
+      function onMove(e) {
+        if (!isDragging || !dragPoint) return;
+        e.preventDefault();
+        const pos = getEventPos(e);
+        dragPoint.current.x = pos.x;
+        dragPoint.current.y = pos.y;
+        dragPoint.target.x = pos.x;
+        dragPoint.target.y = pos.y + (dragPoint.diff.y * 3);
+      }
 
-        /**
-         * Main Render Loop (called by MediaPipe for every frame)
-         */
-        function onResults(results) {
-            latestResults = results;
-            isFaceDetected = results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0;
-            
-            if (currentStep === 1 || currentStep === 3) {
-                // Check if resize is needed
-                if(!canvasRect.width || canvasElement.width !== Math.floor(canvasRect.width * getDPR())) {
-                    resizeCanvas();
-                }
-                if(canvasRect.width === 0) return;
-                
-                canvasCtx.save();
-                const dpr = getDPR();
-                // Retinaディスプレイ等でクッキリ描画するためのスケーリング
-                canvasCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-                
-                canvasCtx.clearRect(0, 0, canvasRect.width, canvasRect.height);
-                
-                // Draw live camera frame (Mirrored)
-                canvasCtx.save();
-                canvasCtx.translate(canvasRect.width, 0);
-                canvasCtx.scale(-1, 1);
-                drawCover(canvasCtx, results.image, canvasRect.width, canvasRect.height);
-                canvasCtx.restore();
-                
-                if (currentStep === 3) {
-                    drawStep3Overlay();
-                }
+      function onUp() {
+        isDragging = false;
+        dragPoint = null;
+      }
 
-                canvasCtx.restore();
-            }
-        }
+      canvas.addEventListener('mousedown', onDown);
+      canvas.addEventListener('mousemove', onMove);
+      canvas.addEventListener('mouseup', onUp);
+      canvas.addEventListener('touchstart', onDown, {passive: false});
+      canvas.addEventListener('touchmove', onMove, {passive: false});
+      canvas.addEventListener('touchend', onUp);
 
-        /**
-         * Helper: Draw image covering the canvas
-         */
-        function drawCover(ctx, img, cw, ch) {
-            const iw = img.width, ih = img.height;
-            
-            // 1. 背景用（ぼかし付きで画面全体をカバー）
-            const rCover = Math.max(cw / iw, ch / ih);
-            const wCover = iw * rCover, hCover = ih * rCover;
-            const xCover = (cw - wCover) / 2, yCover = (ch - hCover) / 2;
-            
-            ctx.filter = 'blur(15px) brightness(0.9)';
-            ctx.drawImage(img, xCover, yCover, wCover, hCover);
-            ctx.filter = 'none';
-
-            // 2. メイン映像（画面の大半が顔になるようにズーム率を調整）
-            const rContain = Math.min(cw / iw, ch / ih);
-            // さらによりズームインした状態（クロップ多め）に調整
-            const finalScale = Math.max(rContain, rCover * 1.1); 
-            
-            const w = iw * finalScale, h = ih * finalScale;
-            
-            // UI（下部のカード）との被りを避けるため、画面上部に顔をシフト (全体の高さの12%分上へ)
-            const shiftY = ch * 0.12; 
-            const x = (cw - w) / 2, y = ((ch - h) / 2) - shiftY;
-            
-            ctx.drawImage(img, x, y, w, h);
-
-            // 描画パラメータを保存（座標計算用）
-            renderParams = { x, y, w, h, scale: finalScale, iw, ih, cw, ch };
-        }
-
-        // MediaPipeの正規化座標(lm)から、画面上（反転・ズーム考慮済）の絶対ピクセル座標を取得
-        function getCanvasPos(lm) {
-            const videoX = lm.x * renderParams.iw;
-            const videoY = lm.y * renderParams.ih;
-            const px = renderParams.x + videoX * renderParams.scale;
-            const py = renderParams.y + videoY * renderParams.scale;
-            // 画面は左右反転して描画されているためXを反転
-            return { x: renderParams.cw - px, y: py };
-        }
-
-        // 画面上の絶対ピクセル座標から、MediaPipeの正規化座標を逆算
-        function getNormFromCanvasPos(posX, posY) {
-            const px = renderParams.cw - posX;
-            const videoX = (px - renderParams.x) / renderParams.scale;
-            const videoY = (posY - renderParams.y) / renderParams.scale;
-            return {
-                x: videoX / renderParams.iw,
-                y: videoY / renderParams.ih
-            };
-        }
-
-        /**
-         * Step Transitions
-         */
-        function switchStep(stepNum) {
-            document.querySelectorAll('.step-ui').forEach(el => {
-                el.classList.add('hidden-step');
-                el.classList.remove('fade-enter', 'fade-enter-active');
-            });
-            
-            const nextUi = document.getElementById(`step-${stepNum}`);
-            nextUi.classList.remove('hidden-step');
-            nextUi.classList.add('fade-enter');
-            
-            // Trigger reflow for animation
-            void nextUi.offsetWidth; 
-            nextUi.classList.add('fade-enter-active');
-            
-            currentStep = stepNum;
-            overlaysContainer.innerHTML = ''; // Clear DOM overlays on step change
-
-            // ガイド枠の表示/非表示を切り替え
-            const faceGuide = document.getElementById('face-guide');
-            if (faceGuide) {
-                faceGuide.style.opacity = stepNum === 1 ? '1' : '0';
-            }
-        }
-
-        // Action: Step 1 -> Step 2
-        function captureAndAnalyze() {
-            if (!isFaceDetected || !latestResults) {
-                console.warn("顔が検出されていませんが、デモとして進行します。");
-                capturedLandmarks = createDummyLandmarks(); // Fallback for mockup testing
-            } else {
-                // Clone current landmarks
-                capturedLandmarks = JSON.parse(JSON.stringify(latestResults.multiFaceLandmarks[0]));
-            }
-
-            // Capture the current canvas state to a static image
-            capturedImageStr = canvasElement.toDataURL('image/jpeg', 0.9);
-            capturedImageObj = new Image();
-            
-            // Load natively for flicker-free redrawing during drag
-            capturedImageObj.onload = () => {
-                // 編集可能なポイントの初期化
-                adjustedPoints = {
-                    mouthL: getCanvasPos(capturedLandmarks[LM.mouthLeft]),
-                    mouthR: getCanvasPos(capturedLandmarks[LM.mouthRight]),
-                    eyeL: getCanvasPos(capturedLandmarks[LM.eyeOuterLeft]),
-                    eyeR: getCanvasPos(capturedLandmarks[LM.eyeOuterRight]),
-                    cheekL: getCanvasPos(capturedLandmarks[LM.cheekLeft]),
-                    cheekR: getCanvasPos(capturedLandmarks[LM.cheekRight])
-                };
-
-                calculateAnalysis();
-                updateAnalysisUI();
-
-                switchStep(2);
-                drawStep2Canvas();
-            };
-            capturedImageObj.src = capturedImageStr;
-        }
-
-        // Action: Step 2 -> Step 3
-        function startPracticeMode() {
-            switchStep(3);
-            // Live camera resumes automatically via onResults loop
-        }
-
-        // Action: Step 3 -> Step 4
-        function showMakeupAdvice() {
-            switchStep(4);
-            renderStaticFrame();
-            drawMakeupAdvice();
-        }
-
-        // Action: Step 4 -> Step 1
-        function resetApp() {
-            capturedImageStr = null;
-            capturedImageObj = null;
-            capturedLandmarks = null;
-            switchStep(1);
-        }
-
-        /**
-         * Dynamic Analysis Logic
-         */
-        function calculateAnalysis() {
-            // 画面上での目尻間のピクセル距離（成人の平均的な目尻間距離を約95mmと仮定してピクセル/mm比を算出）
-            const eyeDistPx = Math.hypot(adjustedPoints.eyeR.x - adjustedPoints.eyeL.x, adjustedPoints.eyeR.y - adjustedPoints.eyeL.y);
-            const pxPerMm = eyeDistPx / 95;
-
-            // ユーザーの顔の座標値から固有のシードを生成（毎回同じ顔なら同じ結果になり、違う顔ならその人の顔立ちに合わせて数値が変わる）
-            const seed = adjustedPoints.mouthL.y + adjustedPoints.eyeL.x + adjustedPoints.cheekR.y;
-            const pseudoRandom = (s) => Math.abs(Math.sin(s) * 10000) % 1;
-
-            // 個人の顔立ちに合わせた理想の移動量(mm)を算出
-            const mouthMm = Math.floor(3 + pseudoRandom(seed) * 4);      // 3〜6mm
-            const eyeMm = Math.floor(1 + pseudoRandom(seed + 1) * 2);    // 1〜2mm
-            const cheekMm = Math.floor(2 + pseudoRandom(seed + 2) * 3);  // 2〜4mm
-
-            // ピクセル移動量に変換（左側パーツを基準。外側へ移動＝Xはマイナス）
-            analysisData = {
-                mouth: { 
-                    mm: mouthMm, 
-                    shiftY: -(mouthMm * pxPerMm), 
-                    shiftX: -(mouthMm * pxPerMm * 0.25) // 少し斜め上外側へ
-                },
-                eye: { 
-                    mm: eyeMm, 
-                    shiftY: (eyeMm * pxPerMm), 
-                    shiftX: -(eyeMm * pxPerMm * 0.15) // 少し斜め下外側へ
-                },
-                cheek: { 
-                    mm: cheekMm, 
-                    shiftY: -(cheekMm * pxPerMm), 
-                    shiftX: -(cheekMm * pxPerMm * 0.15) // 少し斜め上外側へ
-                }
-            };
-        }
-
-        function updateAnalysisUI() {
-            const container = document.getElementById('analysis-results-ui');
-            if (container) {
-                container.innerHTML = `
-                    <div class="flex flex-col"><span class="text-brand-accent text-lg">↑ ${analysisData.mouth.mm}<span class="text-xs">mm</span></span>口角</div>
-                    <div class="flex flex-col"><span class="text-brand-accent text-lg">↓ ${analysisData.eye.mm}<span class="text-xs">mm</span></span>目尻</div>
-                    <div class="flex flex-col"><span class="text-brand-accent text-lg">↑ ${analysisData.cheek.mm}<span class="text-xs">mm</span></span>頬位置</div>
-                `;
-            }
-        }
-
-        /**
-         * Render captured image for Steps 2 & 4
-         */
-        function renderStaticFrame() {
-            if (!capturedImageObj) return;
-            canvasCtx.save();
-            const dpr = getDPR();
-            canvasCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            canvasCtx.clearRect(0, 0, canvasRect.width, canvasRect.height);
-            
-            // Step 4ではアドバイスカードを目立たせるため、少し画像を暗くする
-            if (currentStep === 4) {
-                canvasCtx.filter = 'brightness(0.9) contrast(0.9)';
-            }
-            
-            canvasCtx.drawImage(capturedImageObj, 0, 0, canvasRect.width, canvasRect.height);
-            
-            canvasCtx.filter = 'none';
-            canvasCtx.restore();
-        }
-
-        /**
-         * Drawing logic for Step 2 (Analysis Vectors & Draggable Points)
-         */
-        function drawStep2Canvas() {
-            if (!capturedImageObj) return;
-            
-            canvasCtx.save();
-            const dpr = getDPR();
-            canvasCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            canvasCtx.clearRect(0, 0, canvasRect.width, canvasRect.height);
-            
-            // Image object drawn directly matching the logical size
-            canvasCtx.drawImage(capturedImageObj, 0, 0, canvasRect.width, canvasRect.height);
-
-            overlaysContainer.innerHTML = ''; // DOM上の要素はクリア
-
-            // 現在地とターゲットを描画するヘルパー
-                const drawPoint = (key, current, shiftX, shiftY, labelText) => {
-                    const target = { x: current.x + shiftX, y: current.y + shiftY };
-
-                    // 1. 軌跡の点線
-                    canvasCtx.beginPath();
-                    canvasCtx.moveTo(current.x, current.y);
-                    canvasCtx.lineTo(target.x, target.y);
-                    canvasCtx.strokeStyle = 'rgba(255,255,255,0.7)';
-                    canvasCtx.lineWidth = 1.5;
-                    canvasCtx.setLineDash([3, 3]);
-                    canvasCtx.stroke();
-                    canvasCtx.setLineDash([]);
-
-                    // 2. ターゲット位置（黄色）
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(target.x, target.y, 5, 0, Math.PI*2);
-                    canvasCtx.fillStyle = '#FDE047'; // 鮮やかな黄色
-                    canvasCtx.fill();
-                    canvasCtx.lineWidth = 2;
-                    canvasCtx.strokeStyle = '#ffffff';
-                    canvasCtx.stroke();
-
-                    // 3. ターゲットのラベル（キャンバスに直接描画）
-                    canvasCtx.font = 'bold 10px "Noto Sans JP", sans-serif';
-                    const metrics = canvasCtx.measureText(labelText);
-                    const w = metrics.width + 12;
-                    const h = 18;
-                    canvasCtx.fillStyle = 'rgba(253, 224, 71, 0.95)'; // 黄色背景
-                    canvasCtx.beginPath();
-                    if(canvasCtx.roundRect) {
-                        canvasCtx.roundRect(target.x - w/2, target.y - h - 8, w, h, 9);
-                    } else {
-                        canvasCtx.rect(target.x - w/2, target.y - h - 8, w, h);
-                    }
-                    canvasCtx.fill();
-                    canvasCtx.fillStyle = '#5A4B4E'; // ダークテキスト
-                    canvasCtx.textAlign = 'center';
-                    canvasCtx.textBaseline = 'middle';
-                    canvasCtx.fillText(labelText, target.x, target.y - h/2 - 8);
-
-                    // 4. 現在位置（ピンク・ドラッグ可能）
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(current.x, current.y, 8, 0, Math.PI*2);
-                    canvasCtx.fillStyle = '#E6A8B8'; // ブランドのピンク
-                    canvasCtx.fill();
-                    canvasCtx.lineWidth = 2;
-                    canvasCtx.strokeStyle = '#ffffff';
-                    canvasCtx.stroke();
-                };
-
-                // 各パーツの描画
-                // 左側はshiftXをそのまま適用し、右側は外側へ広げるためにXを反転させる（-をかける）
-                drawPoint('mouthL', adjustedPoints.mouthL, analysisData.mouth.shiftX, analysisData.mouth.shiftY, `↑+${analysisData.mouth.mm}mm`);
-                drawPoint('mouthR', adjustedPoints.mouthR, -analysisData.mouth.shiftX, analysisData.mouth.shiftY, `↑+${analysisData.mouth.mm}mm`);
-                
-                drawPoint('eyeL', adjustedPoints.eyeL, analysisData.eye.shiftX, analysisData.eye.shiftY, `↓-${analysisData.eye.mm}mm`);
-                drawPoint('eyeR', adjustedPoints.eyeR, -analysisData.eye.shiftX, analysisData.eye.shiftY, `↓-${analysisData.eye.mm}mm`);
-                
-                drawPoint('cheekL', adjustedPoints.cheekL, analysisData.cheek.shiftX, analysisData.cheek.shiftY, `↑+${analysisData.cheek.mm}mm`);
-                drawPoint('cheekR', adjustedPoints.cheekR, -analysisData.cheek.shiftX, analysisData.cheek.shiftY, `↑+${analysisData.cheek.mm}mm`);
-
-                canvasCtx.restore();
-        }
-
-        /**
-         * Drawing logic for Step 3 (Live Practice Mode Guidelines)
-         */
-        function drawStep3Overlay() {
-            if (!capturedImageObj || !adjustedPoints) return;
-            
-            // 元の撮影画像をモノクロ・半透明でオーバーレイ表示し、基準となる顔を固定
-            canvasCtx.save();
-            canvasCtx.globalAlpha = 0.35;
-            canvasCtx.filter = 'grayscale(100%)';
-            canvasCtx.drawImage(capturedImageObj, 0, 0, canvasRect.width, canvasRect.height);
-            canvasCtx.filter = 'none';
-            canvasCtx.globalAlpha = 1.0;
-
-            // ライブ映像のランドマークを取得（ユーザーの現在位置）
-            const liveLandmarks = latestResults && latestResults.multiFaceLandmarks && latestResults.multiFaceLandmarks[0];
-
-            // ターゲット位置と現在位置の距離を計算し、重なっているか判定する関数
-            const checkMatch = (targetPos, lmIndex) => {
-                if (!liveLandmarks || !liveLandmarks[lmIndex]) return false;
-                const livePos = getCanvasPos(liveLandmarks[lmIndex]);
-                const dist = Math.hypot(targetPos.x - livePos.x, targetPos.y - livePos.y);
-                return dist < 18; // 18px以内の誤差なら「正解」として光らせる
-            };
-
-            // 画面上に固定された理想のターゲット位置を描画
-            const drawTarget = (x, y, isGlowing) => {
-                if (isGlowing) {
-                    // 正解時：黄色く発光するエフェクト
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(x, y, 16, 0, 2 * Math.PI);
-                    canvasCtx.fillStyle = 'rgba(253, 224, 71, 0.5)'; // 黄色のオーラ
-                    canvasCtx.fill();
-                    
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(x, y, 8, 0, 2 * Math.PI);
-                    canvasCtx.strokeStyle = '#FDE047'; // 鮮やかな黄色枠
-                    canvasCtx.lineWidth = 3;
-                    canvasCtx.stroke();
-
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(x, y, 3, 0, 2 * Math.PI);
-                    canvasCtx.fillStyle = '#FFFFFF';
-                    canvasCtx.fill();
-                } else {
-                    // 通常時：ピンク色の点線マーカー
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(x, y, 12, 0, 2 * Math.PI);
-                    canvasCtx.strokeStyle = 'rgba(230, 168, 184, 0.8)'; // brand-accent
-                    canvasCtx.lineWidth = 2;
-                    canvasCtx.setLineDash([4, 4]);
-                    canvasCtx.stroke();
-                    canvasCtx.setLineDash([]);
-
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(x, y, 3, 0, 2 * Math.PI);
-                    canvasCtx.fillStyle = 'rgba(230, 168, 184, 1)';
-                    canvasCtx.fill();
-                }
-                return { x, y };
-            };
-
-            // ターゲット座標の算出
-            const posMouthL = { x: adjustedPoints.mouthL.x + analysisData.mouth.shiftX, y: adjustedPoints.mouthL.y + analysisData.mouth.shiftY };
-            const posMouthR = { x: adjustedPoints.mouthR.x - analysisData.mouth.shiftX, y: adjustedPoints.mouthR.y + analysisData.mouth.shiftY };
-            const posCheekL = { x: adjustedPoints.cheekL.x + analysisData.cheek.shiftX, y: adjustedPoints.cheekL.y + analysisData.cheek.shiftY };
-            const posCheekR = { x: adjustedPoints.cheekR.x - analysisData.cheek.shiftX, y: adjustedPoints.cheekR.y + analysisData.cheek.shiftY };
-            const posEyeL = { x: adjustedPoints.eyeL.x + analysisData.eye.shiftX, y: adjustedPoints.eyeL.y + analysisData.eye.shiftY };
-            const posEyeR = { x: adjustedPoints.eyeR.x - analysisData.eye.shiftX, y: adjustedPoints.eyeR.y + analysisData.eye.shiftY };
-
-            // 各パーツが正解位置に来ているか判定
-            const matchMouthL = checkMatch(posMouthL, LM.mouthLeft);
-            const matchMouthR = checkMatch(posMouthR, LM.mouthRight);
-            const matchCheekL = checkMatch(posCheekL, LM.cheekLeft);
-            const matchCheekR = checkMatch(posCheekR, LM.cheekRight);
-            const matchEyeL = checkMatch(posEyeL, LM.eyeOuterLeft);
-            const matchEyeR = checkMatch(posEyeR, LM.eyeOuterRight);
-
-            // ターゲットの描画
-            const tMouthL = drawTarget(posMouthL.x, posMouthL.y, matchMouthL);
-            const tMouthR = drawTarget(posMouthR.x, posMouthR.y, matchMouthR);
-            const tCheekL = drawTarget(posCheekL.x, posCheekL.y, matchCheekL);
-            const tCheekR = drawTarget(posCheekR.x, posCheekR.y, matchCheekR);
-            const tEyeL = drawTarget(posEyeL.x, posEyeL.y, matchEyeL);
-            const tEyeR = drawTarget(posEyeR.x, posEyeR.y, matchEyeR);
-            
-            // 頬と口角を結ぶガイドラインを描画（両方正解なら線も黄色に光る）
-            canvasCtx.beginPath();
-            canvasCtx.moveTo(tCheekL.x, tCheekL.y);
-            canvasCtx.lineTo(tMouthL.x, tMouthL.y);
-            canvasCtx.strokeStyle = (matchCheekL && matchMouthL) ? 'rgba(253, 224, 71, 0.8)' : 'rgba(255,255,255,0.6)';
-            canvasCtx.lineWidth = (matchCheekL && matchMouthL) ? 2 : 1;
-            canvasCtx.stroke();
-
-            canvasCtx.beginPath();
-            canvasCtx.moveTo(tCheekR.x, tCheekR.y);
-            canvasCtx.lineTo(tMouthR.x, tMouthR.y);
-            canvasCtx.strokeStyle = (matchCheekR && matchMouthR) ? 'rgba(253, 224, 71, 0.8)' : 'rgba(255,255,255,0.6)';
-            canvasCtx.lineWidth = (matchCheekR && matchMouthR) ? 2 : 1;
-            canvasCtx.stroke();
-
-            canvasCtx.restore();
-        }
-
-        /**
-         * Drawing logic for Step 4 (Makeup Advice Text Overlays)
-         */
-        function drawMakeupAdvice() {
-            if (!adjustedPoints) return;
-
-            // Lips advice
-            const mouth = adjustedPoints.mouthR; 
-            createAdviseCard(
-                mouth.x > canvasRect.width/2 ? mouth.x - 140 : mouth.x + 20, 
-                mouth.y - 5, 
-                "💄 リップテクニック", 
-                "上唇の端を1mmオーバーに描き、口角が上がっているように偽装します。"
-            );
-
-            // Eye advice
-            const eye = adjustedPoints.eyeL; 
-            createAdviseCard(
-                eye.x > canvasRect.width/2 ? eye.x - 140 : eye.x + 10, 
-                eye.y - 50, 
-                "✨ アイライン", 
-                `目尻を${analysisData.eye.mm}mm下げて引き、優しげなアーチを描くように仕上げます。`
-            );
-            
-            // Cheek advice
-            const cheek = adjustedPoints.cheekR;
-            createAdviseCard(
-                cheek.x > canvasRect.width/2 ? cheek.x - 140 : cheek.x + 20, 
-                cheek.y - 20, 
-                "🌸 チーク位置", 
-                "笑った時に一番高くなる位置より少し上に、楕円形に入れます。"
-            );
-        }
-
-        /**
-         * DOM Helpers for Overlays
-         */
-        function createHtmlOverlay(x, y, text, colorClass) {
-            const el = document.createElement('div');
-            el.className = `absolute bg-white/90 backdrop-blur text-${colorClass} px-3 py-1 rounded-full shadow-md text-xs font-bold font-sans border border-white whitespace-nowrap`;
-            // Center the label over the point
-            el.style.left = `${x}px`;
-            el.style.top = `${y}px`;
-            el.style.transform = 'translate(-50%, -50%)';
-            el.innerText = text;
-            overlaysContainer.appendChild(el);
-        }
-
-        function createAdviseCard(x, y, title, desc) {
-            const el = document.createElement('div');
-            // Keep card within bounds
-            const safeX = Math.max(10, Math.min(x, canvasRect.width - 150));
-            
-            el.className = `absolute bg-white/95 backdrop-blur-md rounded-xl p-3 shadow-lg border-l-4 border-brand-accent w-36 fade-enter fade-enter-active`;
-            el.style.left = `${safeX}px`;
-            el.style.top = `${y}px`;
-            
-            el.innerHTML = `
-                <div class="text-[10px] font-bold text-brand-dark mb-1 font-serif">${title}</div>
-                <div class="text-[9px] leading-tight text-gray-600 font-sans">${desc}</div>
-            `;
-            overlaysContainer.appendChild(el);
-        }
-
-        /**
-         * Fallback Mockup Data in case face is not detected (for UI demonstration purposes)
-         */
-        function createDummyLandmarks() {
-            const lm = new Array(468).fill({x: 0.5, y: 0.5, z: 0});
-            lm[LM.mouthLeft] = {x: 0.6, y: 0.7, z: 0};
-            lm[LM.mouthRight] = {x: 0.4, y: 0.7, z: 0};
-            lm[LM.eyeOuterLeft] = {x: 0.7, y: 0.45, z: 0};
-            lm[LM.eyeOuterRight] = {x: 0.3, y: 0.45, z: 0};
-            lm[LM.cheekLeft] = {x: 0.65, y: 0.6, z: 0};
-            lm[LM.cheekRight] = {x: 0.35, y: 0.6, z: 0};
-            return lm;
-        }
-    </script>
+      // --- ボタンイベント ---
+      ui.btnStart.addEventListener('click', () => {
+        analyzeFace();
+        setStep(2);
+      });
+      document.getElementById('btn-practice').addEventListener('click', () => setStep(3));
+      document.getElementById('btn-makeup').addEventListener('click', () => setStep(4));
+      document.getElementById('btn-reset').addEventListener('click', () => setStep(1));
+    });
+  </script>
 </body>
 </html>
